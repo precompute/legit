@@ -6,7 +6,7 @@
 ;; URL: https://github.com/precompute/legit
 ;; Created: March 12, 2025
 ;; Modified: March 16, 2025
-;; Version: 0.0.2
+;; Version: 0.0.3
 ;; Package-Requires: ((emacs "24.1"))
 
 ;; This program is free software: you can redistribute it and/or modify
@@ -62,11 +62,16 @@ beginning of the first word."
           (t (list q r)))))
 
 ;;;;; Clear Overlays
-(defun legit--clear-overlays ()
-  "Clear all overlays that contain `legit-overlay’."
+(defun legit--clear-overlays-in-buffer ()
+  "Clear all overlays in the current buffer that contain `legit-overlay’."
   (cl-loop for ov being the overlays of (current-buffer)
            do (when (overlay-get ov 'legit-overlay)
                 (delete-overlay ov))))
+
+(defun legit--clear-overlays-in-frame ()
+  "Clear all overlays in all windows of the selected frame that contain `legit-overlay’."
+  (cl-loop for w being the windows of (selected-frame)
+           do (with-selected-window w (legit--clear-overlays-in-buffer))))
 
 ;;;;; Make string for object at INDEX
 (defun legit--get-obj-str (index padding letters)
@@ -106,16 +111,15 @@ Returns an alist of (shortcut . line number)."
                              length
                              (log lines-in-window)
                              floor))
-           (pad (if (= lines-in-window (length legit-layout))
-                    pad
-                  (1+ pad))))
+           (pad (if (= lines-in-window (length legit-layout)) pad (1+ pad))))
       (while (< (point) (window-end))
         (let ((overlay (make-overlay (line-beginning-position) (line-beginning-position)))
               (line-str (legit--get-obj-str line-index pad legit-layout)))
           (overlay-put overlay 'legit-overlay t)
-          (overlay-put overlay 'before-string (concat line-str " "))
+          (overlay-put overlay 'before-string (propertize (concat line-str " ")
+                                                          'face 'legit-line-jump-face))
           (overlay-put overlay 'window w)
-          (overlay-put overlay 'face 'legit-line-jump-face)
+          ;; (overlay-put overlay 'face 'legit-line-jump-face) ;; Does not work.
           (setq line-db (cons (cons line-str (+ first-line-number line-index)) line-db)))
         (forward-line 1)
         (cl-incf line-index))
@@ -135,7 +139,50 @@ Returns an alist of (shortcut . line number)."
           (goto-line line)
           (when legit-jump-skip-leading-spaces
             (beginning-of-line-text))))
-    (legit--clear-overlays)))
+    (legit--clear-overlays-in-buffer)))
+
+;;;;; Jump to a window
+;;;;;; Add overlays for legit-to-window
+(defun legit--add-window-overlay ()
+  "Makes overlays before the first line in all visible windows in the current frame.
+Returns an alist of (shortcut . window)."
+  (save-excursion
+    (let* ((window-stats (cl-loop for x being the windows of (selected-frame) collect x))
+           ;; cl-loop does not return minibuffer windows, similar to (walk-windows FUN nil).
+           (windows-in-frame (length window-stats))
+           (window-index 0)
+           (window-db (list))
+           (pad (thread-last legit-layout
+                             length
+                             (log windows-in-frame)
+                             floor))
+           (pad (if (= windows-in-frame (length legit-layout)) pad (1+ pad))))
+      (walk-windows
+       (lambda (w)
+         (with-selected-window w
+           (let ((overlay (make-overlay (window-start) (window-start)))
+                 (window-str (legit--get-obj-str window-index pad legit-layout)))
+             (overlay-put overlay 'legit-overlay t)
+             (overlay-put overlay 'before-string (propertize window-str
+                                                             'face 'legit-window-jump-face))
+             (overlay-put overlay 'window w)
+             (setq window-db (cons (cons window-str w) window-db)))
+           (cl-incf window-index))))
+      window-db)))
+
+;;;;;; legit-to-window
+(defun legit-to-window ()
+  "Create overlays in visible windows on current frame and jump to one."
+  (interactive)
+  (unwind-protect
+      (let* ((db (legit--add-window-overlay))
+             (pad (length (caar db)))
+             (target (legit--input-n-chars pad legit-layout))
+             (window (if target (cdr (assoc target db)) nil)))
+        (if (not window)
+            (message "Sequence not found.")
+          (select-window window)))
+    (legit--clear-overlays-in-frame)))
 
 ;;; provide
 (provide 'legit)
