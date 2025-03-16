@@ -5,8 +5,8 @@
 ;; Author: precompute <git@precompute.net>
 ;; URL: https://github.com/precompute/legit
 ;; Created: March 12, 2025
-;; Modified: March 12, 2025
-;; Version: 0.0.1
+;; Modified: March 16, 2025
+;; Version: 0.0.2
 ;; Package-Requires: ((emacs "24.1"))
 
 ;; This program is free software: you can redistribute it and/or modify
@@ -29,17 +29,26 @@
 
 ;;; Code:
 ;;;; Faces
-(defface legit-line-face
-  '((t :inherit 'region
-       :weight 'bold
-       :box t))
+(defface legit-line-jump-face
+  '((t :inherit 'region))
   "Legit.el Face for lines.")
+
+(defface legit-window-jump-face
+  '((t :inherit 'region
+       :height 2.0))
+  "Legit.el Face for windows.")
 
 ;;;; Variables
 (defcustom legit-layout "asdfghjklqwertyuiopzxcvbnm"
   "String with layout to use for legit.el’s shortcuts.
 For optimal ergonomics, define with home row keys at the beginning."
   :type 'string
+  :group 'legit)
+
+(defcustom legit-jump-skip-leading-spaces t
+  "When jumping to a line, skip leading spaces and set point to the
+beginning of the first word."
+  :type 'boolean
   :group 'legit)
 
 ;;;; Functions
@@ -55,9 +64,9 @@ For optimal ergonomics, define with home row keys at the beginning."
 ;;;;; Clear Overlays
 (defun legit--clear-overlays ()
   "Clear all overlays that contain `legit-overlay’."
-  (dolist (ov (overlays-in (point-min) (point-max)))
-    (when (overlay-get ov 'legit-overlay)
-      (delete-overlay ov))))
+  (cl-loop for ov being the overlays of (current-buffer)
+           do (when (overlay-get ov 'legit-overlay)
+                (delete-overlay ov))))
 
 ;;;;; Make string for object at INDEX
 (defun legit--get-obj-str (index padding letters)
@@ -71,19 +80,18 @@ Returns a string."
         (concat (make-string (- padding (length s)) (aref letters 0)) s)
       s)))
 
-;;;;; Jump to a line
-;;;;;; Get user input
-(defun legit--input-n-chars (n)
-  "Read exactly N chars from the user."
-  (let (input)
-    (dotimes (i n)
-      (thread-last (read-char)
-                   char-to-string
-                   (concat input)
-                   (setq input)))
-    input))
+;;;;; Get user input
+(defun legit--input-n-chars (n letters)
+  "Read N chars from the user.  Return nil if N is not in LETTERS."
+  (cl-loop repeat n
+           for c = (read-char)
+           if (cl-position c letters)
+           concat (char-to-string c) into result
+           else return nil
+           finally return result))
 
-;;;;;; Add overlays for legit-line
+;;;;; Jump to a line
+;;;;;; Add overlays for legit-to-line
 (defun legit--add-buffer-line-overlay ()
   "Makes overlays before a line in the current buffer.
 Returns an alist of (shortcut . line number)."
@@ -93,6 +101,7 @@ Returns an alist of (shortcut . line number)."
            (first-line-number (line-number-at-pos (window-start)))
            (line-index 0)
            (line-db (list))
+           (w (selected-window))
            (pad (thread-last legit-layout
                              length
                              (log lines-in-window)
@@ -104,23 +113,28 @@ Returns an alist of (shortcut . line number)."
         (let ((overlay (make-overlay (line-beginning-position) (line-beginning-position)))
               (line-str (legit--get-obj-str line-index pad legit-layout)))
           (overlay-put overlay 'legit-overlay t)
-          (overlay-put overlay 'before-string (propertize line-str 'face 'legit-line-face))
+          (overlay-put overlay 'before-string (concat line-str " "))
+          (overlay-put overlay 'window w)
+          (overlay-put overlay 'face 'legit-line-jump-face)
           (setq line-db (cons (cons line-str (+ first-line-number line-index)) line-db)))
         (forward-line 1)
-        (setq line-index (1+ line-index)))
+        (cl-incf line-index))
       line-db)))
 
-;;;;;; legit-jump
+;;;;;; legit-to-line
 (defun legit-to-line ()
   "Create overlays in current buffer and jump to a line."
   (interactive)
   (unwind-protect
       (let* ((db (legit--add-buffer-line-overlay))
              (pad (length (caar db)))
-             (target (legit--input-n-chars pad))
-             (line (cdr (assoc target db))))
-        (goto-char (point-min))
-        (forward-line (1- line)))
+             (target (legit--input-n-chars pad legit-layout))
+             (line (if target (cdr (assoc target db)) nil)))
+        (if (not line)
+            (message "Sequence not found.")
+          (goto-line line)
+          (when legit-jump-skip-leading-spaces
+            (beginning-of-line-text))))
     (legit--clear-overlays)))
 
 ;;; provide
