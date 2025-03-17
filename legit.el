@@ -52,7 +52,8 @@ beginning of the first word."
   :group 'legit)
 
 ;;;; Functions
-;;;;; Decimal To Base
+;;;;; Utility Functions
+;;;;;; Decimal To Base
 (defun legit--decimal-to-base (num base)
   "Convert a NUM in decimal to a certain BASE and return a list."
   (let ((q (/ num base))
@@ -61,7 +62,7 @@ beginning of the first word."
           ((= q 0) (list r))
           (t (list q r)))))
 
-;;;;; Clear Overlays
+;;;;;; Clear Overlays
 (defun legit--clear-overlays-in-buffer ()
   "Clear all overlays in the current buffer that contain `legit-overlay’."
   (cl-loop for ov being the overlays of (current-buffer)
@@ -73,7 +74,7 @@ beginning of the first word."
   (cl-loop for w being the windows of (selected-frame)
            do (with-selected-window w (legit--clear-overlays-in-buffer))))
 
-;;;;; Make string for object at INDEX
+;;;;;; Make string for object at INDEX
 (defun legit--get-obj-str (index padding letters)
   "Get a string using LETTERS for the current object at INDEX with PADDING.
 Returns a string."
@@ -85,7 +86,7 @@ Returns a string."
         (concat (make-string (- padding (length s)) (aref letters 0)) s)
       s)))
 
-;;;;; Get user input
+;;;;;; Get user input
 (defun legit--input-n-chars (n letters)
   "Read N chars from the user.  Return nil if N is not in LETTERS."
   (cl-loop repeat n
@@ -94,6 +95,12 @@ Returns a string."
            concat (char-to-string c) into result
            else return nil
            finally return result))
+
+;;;;;; Padding
+(defun legit--pad (l)
+  "Determine padding for sequence of length L."
+  ((lambda (x) (if (= l (length legit-layout)) x (1+ x)))
+   (thread-last legit-layout length (log l) floor)))
 
 ;;;;; Jump to a line
 ;;;;;; Add overlays for legit-to-line
@@ -107,11 +114,7 @@ Returns an alist of (shortcut . line number)."
            (line-index 0)
            (line-db (list))
            (w (selected-window))
-           (pad (thread-last legit-layout
-                             length
-                             (log lines-in-window)
-                             floor))
-           (pad (if (= lines-in-window (length legit-layout)) pad (1+ pad))))
+           (pad (legit--pad lines-in-window)))
       (while (< (point) (window-end))
         (let ((overlay (make-overlay (line-beginning-position) (line-beginning-position)))
               (line-str (legit--get-obj-str line-index pad legit-layout)))
@@ -152,11 +155,7 @@ Returns an alist of (shortcut . window)."
            (windows-in-frame (length window-stats))
            (window-index 0)
            (window-db (list))
-           (pad (thread-last legit-layout
-                             length
-                             (log windows-in-frame)
-                             floor))
-           (pad (if (= windows-in-frame (length legit-layout)) pad (1+ pad))))
+           (pad (legit--pad windows-in-frame)))
       (walk-windows
        (lambda (w)
          (with-selected-window w
@@ -183,6 +182,65 @@ Returns an alist of (shortcut . window)."
             (message "Sequence not found.")
           (select-window window)))
     (legit--clear-overlays-in-frame)))
+
+;;;;; Jump to a frame
+;;;;;; Make collection for completing-read
+(defun legit--frame-collection ()
+  "Return a collection that comprises of various properties of all emacs
+frames and a composed string of the same."
+  (let* ((frame-data (cl-loop for f being the frames collect f))
+         (number-of-frames (length frame-data))
+         (pad (legit--pad number-of-frames))
+         (frame-strs (mapcar (lambda (x) (legit--get-obj-str x pad legit-layout))
+                             (number-sequence 0 (1- number-of-frames))))
+         (frame-wspc-nums (if (and (eq system-type 'gnu-linux)
+                                   (string-equal "x11" (getenv "XDG_SESSION_TYPE")))
+                              (mapcar (lambda (x)
+                                        (aref (x-window-property "_NET_WM_DESKTOP" x "CARDINAL") 0))
+                                      frame-data)
+                            (make-list number-of-frames "")))
+         (frame-windows (mapcar (lambda (x)
+                                  (let* ((w (cl-loop for w being the windows of x
+                                                     collect (with-selected-window w major-mode)))
+                                         (u-w (seq-uniq w)))
+                                    (cl-loop for u in u-w
+                                             concat (concat (propertize (format "%sx" (cl-count u w)) 'face 'success)
+                                                            (propertize ((lambda (z)
+                                                                           (if (string-suffix-p "-mode" z)
+                                                                               (substring z 0 -5)
+                                                                             z))
+                                                                         (format "%s" u))
+                                                                        'face 'font-lock-builtin-face)))))
+                                frame-data))
+         (frame-names (mapcar (lambda (x) (frame-parameter x 'name)) frame-data))
+         (frame-db (cl-loop for a in frame-strs
+                            for b in frame-wspc-nums
+                            for c in frame-windows
+                            for d in frame-names
+                            for e in frame-data
+                            collect (list a b c d e)))
+         (frame-db-strs (cl-loop for a in frame-db
+                                 collect (concat
+                                          (propertize (car a) 'face 'region) " "
+                                          (propertize (if (string-empty-p (nth 1 a)) "" (format "Wspc%s " (nth 1 a)))
+                                                      'face 'font-lock-constant-face)
+                                          (nth 2 a) " "
+                                          (propertize (nth 3 a) 'face 'font-lock-doc-face)))))
+    (cons frame-db frame-db-strs)))
+
+;;;;;; legit-to-frame
+(defun legit-to-frame ()
+  "Collect information about available frames and jump to one with `completing-read’."
+  (interactive)
+  (let* ((rcons (legit--frame-collection))
+         (db (car rcons))
+         (coll (cdr rcons))
+         (result (completing-read "Leg It to Frame: " coll nil t)))
+    (when result
+      (select-frame-set-input-focus
+       (nth 4 (cl-find-if (lambda (x)
+                            (string-equal (car (split-string result)) (car x)))
+                          db))))))
 
 ;;; provide
 (provide 'legit)
