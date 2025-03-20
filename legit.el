@@ -5,8 +5,8 @@
 ;; Author: precompute <git@precompute.net>
 ;; URL: https://github.com/precompute/legit
 ;; Created: March 12, 2025
-;; Modified: March 16, 2025
-;; Version: 0.0.3
+;; Modified: March 20, 2025
+;; Version: 0.0.7
 ;; Package-Requires: ((emacs "24.1"))
 
 ;; This program is free software: you can redistribute it and/or modify
@@ -29,6 +29,10 @@
 
 ;;; Code:
 ;;;; Faces
+(defface legit-word-jump-face
+  '((t :inherit 'region))
+  "Legit.el Face for words.")
+
 (defface legit-line-jump-face
   '((t :inherit 'region))
   "Legit.el Face for lines.")
@@ -55,7 +59,7 @@ beginning of the first word."
 ;;;;; Utility Functions
 ;;;;;; Decimal To Base
 (defun legit--decimal-to-base (num base)
-  "Convert a NUM in decimal to a certain BASE and return a list."
+  "Convert a NUM in decimal to a certain BASE and return a nested list."
   (let ((q (/ num base))
         (r (mod num base)))
     (cond ((>= q base) (list (legit--decimal-to-base q base) r))
@@ -102,9 +106,67 @@ Returns a string."
   ((lambda (x) (if (= l (length legit-layout)) x (1+ x)))
    (thread-last legit-layout length (log l) floor)))
 
+;;;;; Jump to a word
+;;;;;; Add overlays for legit-to-word
+(defun legit--add-word-overlay ()
+  "Makes overlays above words in the selected line.
+Returns an alist of (shortcut . word number)."
+  (save-excursion
+    (beginning-of-line)
+    (let* ((line-data (let ((sentence (list))
+                            (num 0)
+                            pos
+                            (pos-db (list)))
+                        (save-excursion
+                          (save-restriction
+                            (narrow-to-region (line-beginning-position) (line-end-position))
+                            (beginning-of-line)
+                            (setq pos (point))
+                            (while (forward-word-strictly 1)
+                              (setq sentence (nconc sentence (list (buffer-substring-no-properties pos (point)))))
+                              (setq pos-db (cons pos pos-db))
+                              (setq pos (point))
+                              (cl-incf num))))
+                        (cons (append (list sentence) num) (reverse pos-db))))
+           (target-line (caar line-data))
+           (words-in-line (cdar line-data))
+           (word-db (cdr line-data))
+           (str-db (list))
+           (w (selected-window))
+           (pad (legit--pad words-in-line))
+           (overlay-str (concat
+                         (cl-loop for word-index from 0 to (1- words-in-line)
+                                  concat ((lambda (a b)
+                                            ((lambda (s)
+                                               (setq str-db (cons b str-db))
+                                               (concat s (make-string (- (length a) (length s)) 32)))
+                                             (replace-regexp-in-string "\\([[:space:]]*\\).*" (concat "\\1" b) a)))
+                                          (pop target-line)
+                                          (legit--get-obj-str word-index pad legit-layout)))
+                         "\n")))
+      (let ((overlay (make-overlay (line-beginning-position) (line-beginning-position))))
+        (overlay-put overlay 'legit-overlay t)
+        (overlay-put overlay 'before-string (propertize overlay-str 'face 'legit-word-jump-face))
+        (overlay-put overlay 'window w))
+      (cl-loop for x in (reverse str-db) for y in word-db collect (cons x y)))))
+
+;;;;;; legit-to-word
+(defun legit-to-word ()
+  "Create overlays in current line and jump to a word."
+  (interactive)
+  (unwind-protect
+      (let* ((db (legit--add-word-overlay))
+             (pad (length (caar db)))
+             (target (legit--input-n-chars pad legit-layout))
+             (word (if target (cdr (assoc target db)) nil)))
+        (if (not word)
+            (message "Sequence not found.")
+          (goto-char word)))
+    (legit--clear-overlays-in-buffer)))
+
 ;;;;; Jump to a line
 ;;;;;; Add overlays for legit-to-line
-(defun legit--add-buffer-line-overlay ()
+(defun legit--add-before-line-overlay ()
   "Makes overlays before a line in the current buffer.
 Returns an alist of (shortcut . line number)."
   (save-excursion
@@ -133,7 +195,7 @@ Returns an alist of (shortcut . line number)."
   "Create overlays in current buffer and jump to a line."
   (interactive)
   (unwind-protect
-      (let* ((db (legit--add-buffer-line-overlay))
+      (let* ((db (legit--add-before-line-overlay))
              (pad (length (caar db)))
              (target (legit--input-n-chars pad legit-layout))
              (line (if target (cdr (assoc target db)) nil)))
@@ -156,31 +218,34 @@ Returns an alist of (shortcut . window)."
            (window-index 0)
            (window-db (list))
            (pad (legit--pad windows-in-frame)))
-      (walk-windows
-       (lambda (w)
-         (with-selected-window w
-           (let ((overlay (make-overlay (window-start) (window-start)))
-                 (window-str (legit--get-obj-str window-index pad legit-layout)))
-             (overlay-put overlay 'legit-overlay t)
-             (overlay-put overlay 'before-string (propertize window-str
-                                                             'face 'legit-window-jump-face))
-             (overlay-put overlay 'window w)
-             (setq window-db (cons (cons window-str w) window-db)))
-           (cl-incf window-index))))
-      window-db)))
+      (if (< windows-in-frame 2)
+          nil
+        (walk-windows
+         (lambda (w)
+           (with-selected-window w
+             (let ((overlay (make-overlay (window-start) (window-start)))
+                   (window-str (legit--get-obj-str window-index pad legit-layout)))
+               (overlay-put overlay 'legit-overlay t)
+               (overlay-put overlay 'before-string (propertize window-str
+                                                               'face 'legit-window-jump-face))
+               (overlay-put overlay 'window w)
+               (setq window-db (cons (cons window-str w) window-db)))
+             (cl-incf window-index))))
+        window-db))))
 
 ;;;;;; legit-to-window
 (defun legit-to-window ()
   "Create overlays in visible windows on current frame and jump to one."
   (interactive)
   (unwind-protect
-      (let* ((db (legit--add-window-overlay))
-             (pad (length (caar db)))
-             (target (legit--input-n-chars pad legit-layout))
-             (window (if target (cdr (assoc target db)) nil)))
-        (if (not window)
-            (message "Sequence not found.")
-          (select-window window)))
+      (let ((db (legit--add-window-overlay)))
+        (when db
+          (let* ((pad (length (caar db)))
+                 (target (legit--input-n-chars pad legit-layout))
+                 (window (if target (cdr (assoc target db)) nil)))
+            (if (not window)
+                (message "Sequence not found.")
+              (select-window window)))))
     (legit--clear-overlays-in-frame)))
 
 ;;;;; Jump to a frame
@@ -241,6 +306,28 @@ frames and a composed string of the same."
        (nth 4 (cl-find-if (lambda (x)
                             (string-equal (car (split-string result)) (car x)))
                           db))))))
+
+;;;;; Jump Functions
+(defun legit-from-frame ()
+  "Leg It to a frame, then to a window, then to a line, and then to a word."
+  (interactive)
+  (legit-to-frame)
+  (legit-to-window)
+  (legit-to-line)
+  (legit-to-word))
+
+(defun legit-from-window ()
+  "Leg It to a window, then to a line, and then to a word."
+  (interactive)
+  (legit-to-window)
+  (legit-to-line)
+  (legit-to-word))
+
+(defun legit-from-line ()
+  "Leg It to a line, and then to a word."
+  (interactive)
+  (legit-to-line)
+  (legit-to-word))
 
 ;;; provide
 (provide 'legit)
