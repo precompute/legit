@@ -5,8 +5,8 @@
 ;; Author: precompute <git@precompute.net>
 ;; URL: https://github.com/precompute/legit
 ;; Created: March 12, 2025
-;; Modified: March 20, 2025
-;; Version: 0.0.7
+;; Modified: March 21, 2025
+;; Version: 0.0.9
 ;; Package-Requires: ((emacs "24.1"))
 
 ;; This program is free software: you can redistribute it and/or modify
@@ -112,7 +112,6 @@ Returns a string."
   "Makes overlays above words in the selected line.
 Returns an alist of (shortcut . word number)."
   (save-excursion
-    (beginning-of-line)
     (let* ((line-data (let ((sentence (list))
                             (num 0)
                             pos
@@ -140,7 +139,7 @@ Returns an alist of (shortcut . word number)."
                                             ((lambda (s)
                                                (setq str-db (cons b str-db))
                                                (concat s (make-string (- (length a) (length s)) 32)))
-                                             (replace-regexp-in-string "\\([[:space:]]*\\).*" (concat "\\1" b) a)))
+                                             (replace-regexp-in-string "^\\([[:space:]]*\\).*" (concat "\\1" b) a)))
                                           (pop target-line)
                                           (legit--get-obj-str word-index pad legit-layout)))
                          "\n")))
@@ -161,7 +160,8 @@ Returns an alist of (shortcut . word number)."
              (word (if target (cdr (assoc target db)) nil)))
         (if (not word)
             (message "Sequence not found.")
-          (goto-char word)))
+          (goto-char word)
+          (when (= (point) (line-beginning-position)) (beginning-of-line-text))))
     (legit--clear-overlays-in-buffer)))
 
 ;;;;; Jump to a line
@@ -177,17 +177,19 @@ Returns an alist of (shortcut . line number)."
            (line-db (list))
            (w (selected-window))
            (pad (legit--pad lines-in-window)))
-      (while (< (point) (window-end))
-        (let ((overlay (make-overlay (line-beginning-position) (line-beginning-position)))
-              (line-str (legit--get-obj-str line-index pad legit-layout)))
-          (overlay-put overlay 'legit-overlay t)
-          (overlay-put overlay 'before-string (propertize (concat line-str " ")
-                                                          'face 'legit-line-jump-face))
-          (overlay-put overlay 'window w)
-          ;; (overlay-put overlay 'face 'legit-line-jump-face) ;; Does not work.
-          (setq line-db (cons (cons line-str (+ first-line-number line-index)) line-db)))
-        (forward-line 1)
-        (cl-incf line-index))
+      (if (< lines-in-window 2)
+          nil
+        (while (< (point) (window-end))
+          (let ((overlay (make-overlay (line-beginning-position) (line-beginning-position)))
+                (line-str (legit--get-obj-str line-index pad legit-layout)))
+            (overlay-put overlay 'legit-overlay t)
+            (overlay-put overlay 'before-string (propertize (concat line-str " ")
+                                                            'face 'legit-line-jump-face))
+            (overlay-put overlay 'window w)
+            ;; (overlay-put overlay 'face 'legit-line-jump-face) ;; Does not work.
+            (setq line-db (cons (cons line-str (+ first-line-number line-index)) line-db)))
+          (forward-line 1)
+          (cl-incf line-index)))
       line-db)))
 
 ;;;;;; legit-to-line
@@ -195,15 +197,16 @@ Returns an alist of (shortcut . line number)."
   "Create overlays in current buffer and jump to a line."
   (interactive)
   (unwind-protect
-      (let* ((db (legit--add-before-line-overlay))
-             (pad (length (caar db)))
-             (target (legit--input-n-chars pad legit-layout))
-             (line (if target (cdr (assoc target db)) nil)))
-        (if (not line)
-            (message "Sequence not found.")
-          (goto-line line)
-          (when legit-jump-skip-leading-spaces
-            (beginning-of-line-text))))
+      (let ((db (legit--add-before-line-overlay)))
+        (when db
+          (let* ((pad (length (caar db)))
+                 (target (legit--input-n-chars pad legit-layout))
+                 (line (if target (cdr (assoc target db)) nil)))
+            (if (not line)
+                (message "Sequence not found.")
+              (goto-line line)
+              (when legit-jump-skip-leading-spaces
+                (beginning-of-line-text))))))
     (legit--clear-overlays-in-buffer)))
 
 ;;;;; Jump to a window
@@ -254,44 +257,46 @@ Returns an alist of (shortcut . window)."
   "Return a collection that comprises of various properties of all emacs
 frames and a composed string of the same."
   (let* ((frame-data (cl-loop for f being the frames collect f))
-         (number-of-frames (length frame-data))
-         (pad (legit--pad number-of-frames))
-         (frame-strs (mapcar (lambda (x) (legit--get-obj-str x pad legit-layout))
-                             (number-sequence 0 (1- number-of-frames))))
-         (frame-wspc-nums (if (and (eq system-type 'gnu-linux)
-                                   (string-equal "x11" (getenv "XDG_SESSION_TYPE")))
-                              (mapcar (lambda (x)
-                                        (aref (x-window-property "_NET_WM_DESKTOP" x "CARDINAL") 0))
-                                      frame-data)
-                            (make-list number-of-frames "")))
-         (frame-windows (mapcar (lambda (x)
-                                  (let* ((w (cl-loop for w being the windows of x
-                                                     collect (with-selected-window w major-mode)))
-                                         (u-w (seq-uniq w)))
-                                    (cl-loop for u in u-w
-                                             concat (concat (propertize (format "%sx" (cl-count u w)) 'face 'success)
-                                                            (propertize ((lambda (z)
-                                                                           (if (string-suffix-p "-mode" z)
-                                                                               (substring z 0 -5)
-                                                                             z))
-                                                                         (format "%s" u))
-                                                                        'face 'font-lock-builtin-face)))))
-                                frame-data))
-         (frame-names (mapcar (lambda (x) (frame-parameter x 'name)) frame-data))
-         (frame-db (cl-loop for a in frame-strs
-                            for b in frame-wspc-nums
-                            for c in frame-windows
-                            for d in frame-names
-                            for e in frame-data
-                            collect (list a b c d e)))
-         (frame-db-strs (cl-loop for a in frame-db
-                                 collect (concat
-                                          (propertize (car a) 'face 'region) " "
-                                          (propertize (if (string-empty-p (nth 1 a)) "" (format "Wspc%s " (nth 1 a)))
-                                                      'face 'font-lock-constant-face)
-                                          (nth 2 a) " "
-                                          (propertize (nth 3 a) 'face 'font-lock-doc-face)))))
-    (cons frame-db frame-db-strs)))
+         (number-of-frames (length frame-data)))
+    (if (< number-of-frames 2)
+        nil
+      (let* ((pad (legit--pad number-of-frames))
+             (frame-strs (mapcar (lambda (x) (legit--get-obj-str x pad legit-layout))
+                                 (number-sequence 0 (1- number-of-frames))))
+             (frame-wspc-nums (if (and (eq system-type 'gnu-linux)
+                                       (string-equal "x11" (getenv "XDG_SESSION_TYPE")))
+                                  (mapcar (lambda (x)
+                                            (aref (x-window-property "_NET_WM_DESKTOP" x "CARDINAL") 0))
+                                          frame-data)
+                                (make-list number-of-frames "")))
+             (frame-windows (mapcar (lambda (x)
+                                      (let* ((w (cl-loop for w being the windows of x
+                                                         collect (with-selected-window w major-mode)))
+                                             (u-w (seq-uniq w)))
+                                        (cl-loop for u in u-w
+                                                 concat (concat (propertize (format "%sx" (cl-count u w)) 'face 'success)
+                                                                (propertize ((lambda (z)
+                                                                               (if (string-suffix-p "-mode" z)
+                                                                                   (substring z 0 -5)
+                                                                                 z))
+                                                                             (format "%s" u))
+                                                                            'face 'font-lock-builtin-face)))))
+                                    frame-data))
+             (frame-names (mapcar (lambda (x) (frame-parameter x 'name)) frame-data))
+             (frame-db (cl-loop for a in frame-strs
+                                for b in frame-wspc-nums
+                                for c in frame-windows
+                                for d in frame-names
+                                for e in frame-data
+                                collect (list a b c d e)))
+             (frame-db-strs (cl-loop for a in frame-db
+                                     collect (concat
+                                              (propertize (car a) 'face 'region) " "
+                                              (propertize (if (string-empty-p (nth 1 a)) "" (format "Wspc%s " (nth 1 a)))
+                                                          'face 'font-lock-constant-face)
+                                              (nth 2 a) " "
+                                              (propertize (nth 3 a) 'face 'font-lock-doc-face))))))
+      (cons frame-db frame-db-strs))))
 
 ;;;;;; legit-to-frame
 (defun legit-to-frame ()
