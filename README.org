@@ -2,4 +2,20 @@
 
 #+HTML: <img src="banner.jpg" align="center">
 
-Leg it across Emacs!  Frame, Window, Line, Word - traverse the hierarchy and reach where you were supposed to really be!
+Leg it across Emacs!  Frame, Window, Line, Word - traverse the hierarchy in just a few characters!
+
+- =legit-to-word= :: Create overlays in current line and jump to a word.
+- =legit-to-line= :: Create overlays in current buffer and jump to a line.
+- =legit-to-window= :: Create overlays in visible windows on current frame and jump to one.
+- =legit-to-frame= :: Collect information about available frames and jump to one with `completing-read’.
+- =legit-from-frame= :: Leg It to a frame, then to a window, then to a line, and then to a word.
+- =legit-from-window= :: Leg It to a window, then to a line, and then to a word.
+- =legit-from-line= :: Leg It to a line, and then to a word.
+  
+** Known issues
+- =legit-to-word= does not work well in lines that mix variable-pitch and fixed-pitch faces.
+- The overlays for =legit-to-word= and the cursor positions may differ by 1, depending on whether the character under the overlay is a space or a punctuation.
+- Entering invalid keys doesn’t immediately break out of the command.  Press ~escape~ or ~C-g~ to exit instead.
+- Frame’s workspace number is only available on linux systems running Xorg.
+- On Linux systems running Xorg, frames are moved to the current workspace when switching with =legit-to-frame=.
+

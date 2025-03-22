@@ -5,9 +5,9 @@
 ;; Author: precompute <git@precompute.net>
 ;; URL: https://github.com/precompute/legit
 ;; Created: March 12, 2025
-;; Modified: March 21, 2025
-;; Version: 0.0.9
-;; Package-Requires: ((emacs "24.1"))
+;; Modified: March 22, 2025
+;; Version: 0.0.10
+;; Package-Requires: ((emacs "26.1"))
 
 ;; This program is free software: you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -129,39 +129,39 @@ Returns an alist of (shortcut . word number)."
                         (cons (append (list sentence) num) (reverse pos-db))))
            (target-line (caar line-data))
            (words-in-line (cdar line-data))
-           (word-db (cdr line-data))
-           (str-db (list))
-           (w (selected-window))
-           (pad (legit--pad words-in-line))
-           (overlay-str (concat
-                         (cl-loop for word-index from 0 to (1- words-in-line)
-                                  concat ((lambda (a b)
-                                            ((lambda (s)
-                                               (setq str-db (cons b str-db))
-                                               (concat s (make-string (- (length a) (length s)) 32)))
-                                             (replace-regexp-in-string "^\\([[:space:]]*\\).*" (concat "\\1" b) a)))
-                                          (pop target-line)
-                                          (legit--get-obj-str word-index pad legit-layout)))
-                         "\n")))
-      (let ((overlay (make-overlay (line-beginning-position) (line-beginning-position))))
-        (overlay-put overlay 'legit-overlay t)
-        (overlay-put overlay 'before-string (propertize overlay-str 'face 'legit-word-jump-face))
-        (overlay-put overlay 'window w))
-      (cl-loop for x in (reverse str-db) for y in word-db collect (cons x y)))))
+           (word-db (cdr line-data)))
+      (when (> words-in-line 1)
+        (let* ((str-db (list))
+               (w (selected-window))
+               (pad (legit--pad words-in-line))
+               (overlay-str (concat
+                             (cl-loop for word-index from 0 to (1- words-in-line)
+                                      concat ((lambda (a b)
+                                                ((lambda (s)
+                                                   (setq str-db (cons b str-db))
+                                                   (concat s (make-string (- (length a) (length s)) 32)))
+                                                 (replace-regexp-in-string "^\\([[:space:]]*\\).*"
+                                                                           (concat "\\1" b) a)))
+                                              (pop target-line)
+                                              (legit--get-obj-str word-index pad legit-layout)))
+                             "\n")))
+          (let ((overlay (make-overlay (line-beginning-position) (line-beginning-position))))
+            (overlay-put overlay 'legit-overlay t)
+            (overlay-put overlay 'before-string (propertize overlay-str 'face 'legit-word-jump-face))
+            (overlay-put overlay 'window w))
+          (cl-loop for x in (reverse str-db) for y in word-db collect (cons x y)))))))
 
 ;;;;;; legit-to-word
 (defun legit-to-word ()
   "Create overlays in current line and jump to a word."
   (interactive)
   (unwind-protect
-      (let* ((db (legit--add-word-overlay))
-             (pad (length (caar db)))
-             (target (legit--input-n-chars pad legit-layout))
-             (word (if target (cdr (assoc target db)) nil)))
-        (if (not word)
-            (message "Sequence not found.")
-          (goto-char word)
-          (when (= (point) (line-beginning-position)) (beginning-of-line-text))))
+      (when-let* ((db (legit--add-word-overlay))
+                  (pad (length (caar db)))
+                  (target (legit--input-n-chars pad legit-layout))
+                  (word (cdr (assoc target db))))
+        (goto-char word)
+        (when (= (point) (line-beginning-position)) (beginning-of-line-text)))
     (legit--clear-overlays-in-buffer)))
 
 ;;;;; Jump to a line
@@ -177,8 +177,7 @@ Returns an alist of (shortcut . line number)."
            (line-db (list))
            (w (selected-window))
            (pad (legit--pad lines-in-window)))
-      (if (< lines-in-window 2)
-          nil
+      (when (> lines-in-window 1)
         (while (< (point) (window-end))
           (let ((overlay (make-overlay (line-beginning-position) (line-beginning-position)))
                 (line-str (legit--get-obj-str line-index pad legit-layout)))
@@ -186,7 +185,6 @@ Returns an alist of (shortcut . line number)."
             (overlay-put overlay 'before-string (propertize (concat line-str " ")
                                                             'face 'legit-line-jump-face))
             (overlay-put overlay 'window w)
-            ;; (overlay-put overlay 'face 'legit-line-jump-face) ;; Does not work.
             (setq line-db (cons (cons line-str (+ first-line-number line-index)) line-db)))
           (forward-line 1)
           (cl-incf line-index)))
@@ -197,16 +195,13 @@ Returns an alist of (shortcut . line number)."
   "Create overlays in current buffer and jump to a line."
   (interactive)
   (unwind-protect
-      (let ((db (legit--add-before-line-overlay)))
-        (when db
-          (let* ((pad (length (caar db)))
-                 (target (legit--input-n-chars pad legit-layout))
-                 (line (if target (cdr (assoc target db)) nil)))
-            (if (not line)
-                (message "Sequence not found.")
-              (goto-line line)
-              (when legit-jump-skip-leading-spaces
-                (beginning-of-line-text))))))
+      (when-let* ((db (legit--add-before-line-overlay))
+                  (pad (length (caar db)))
+                  (target (legit--input-n-chars pad legit-layout))
+                  (line (cdr (assoc target db))))
+        (goto-line line)
+        (when legit-jump-skip-leading-spaces
+          (beginning-of-line-text)))
     (legit--clear-overlays-in-buffer)))
 
 ;;;;; Jump to a window
@@ -221,8 +216,7 @@ Returns an alist of (shortcut . window)."
            (window-index 0)
            (window-db (list))
            (pad (legit--pad windows-in-frame)))
-      (if (< windows-in-frame 2)
-          nil
+      (when (> windows-in-frame 1)
         (walk-windows
          (lambda (w)
            (with-selected-window w
@@ -241,14 +235,11 @@ Returns an alist of (shortcut . window)."
   "Create overlays in visible windows on current frame and jump to one."
   (interactive)
   (unwind-protect
-      (let ((db (legit--add-window-overlay)))
-        (when db
-          (let* ((pad (length (caar db)))
-                 (target (legit--input-n-chars pad legit-layout))
-                 (window (if target (cdr (assoc target db)) nil)))
-            (if (not window)
-                (message "Sequence not found.")
-              (select-window window)))))
+      (when-let* ((db (legit--add-window-overlay))
+                  (pad (length (caar db)))
+                  (target (legit--input-n-chars pad legit-layout))
+                  (window (cdr (assoc target db))))
+        (select-window window))
     (legit--clear-overlays-in-frame)))
 
 ;;;;; Jump to a frame
@@ -258,8 +249,7 @@ Returns an alist of (shortcut . window)."
 frames and a composed string of the same."
   (let* ((frame-data (cl-loop for f being the frames collect f))
          (number-of-frames (length frame-data)))
-    (if (< number-of-frames 2)
-        nil
+    (when (> number-of-frames 1)
       (let* ((pad (legit--pad number-of-frames))
              (frame-strs (mapcar (lambda (x) (legit--get-obj-str x pad legit-layout))
                                  (number-sequence 0 (1- number-of-frames))))
@@ -295,22 +285,21 @@ frames and a composed string of the same."
                                               (propertize (if (string-empty-p (nth 1 a)) "" (format "Wspc%s " (nth 1 a)))
                                                           'face 'font-lock-constant-face)
                                               (nth 2 a) " "
-                                              (propertize (nth 3 a) 'face 'font-lock-doc-face))))))
-      (cons frame-db frame-db-strs))))
+                                              (propertize (nth 3 a) 'face 'font-lock-doc-face)))))
+        (cons frame-db frame-db-strs)))))
 
 ;;;;;; legit-to-frame
 (defun legit-to-frame ()
   "Collect information about available frames and jump to one with `completing-read’."
   (interactive)
-  (let* ((rcons (legit--frame-collection))
-         (db (car rcons))
-         (coll (cdr rcons))
-         (result (completing-read "Leg It to Frame: " coll nil t)))
-    (when result
-      (select-frame-set-input-focus
-       (nth 4 (cl-find-if (lambda (x)
-                            (string-equal (car (split-string result)) (car x)))
-                          db))))))
+  (when-let* ((rcons (legit--frame-collection))
+              (db (car rcons))
+              (coll (cdr rcons))
+              (result (completing-read "Leg It to Frame: " coll nil t)))
+    (select-frame-set-input-focus
+     (nth 4 (cl-find-if (lambda (x)
+                          (string-equal (car (split-string result)) (car x)))
+                        db)))))
 
 ;;;;; Jump Functions
 (defun legit-from-frame ()
