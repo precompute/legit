@@ -5,8 +5,8 @@
 ;; Author: precompute <git@precompute.net>
 ;; URL: https://github.com/precompute/legit
 ;; Created: March 12, 2025
-;; Modified: March 22, 2025
-;; Version: 0.0.10
+;; Modified: March 27, 2025
+;; Version: 0.0.11
 ;; Package-Requires: ((emacs "26.1"))
 
 ;; This program is free software: you can redistribute it and/or modify
@@ -28,6 +28,7 @@
 ;; hierarchy and reach where you were supposed to really be!
 
 ;;; Code:
+(require 'subr-x)
 ;;;; Faces
 (defface legit-word-jump-face
   '((t :inherit 'region))
