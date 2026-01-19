@@ -5,8 +5,8 @@
 ;; Author: precompute <git@precompute.net>
 ;; URL: https://github.com/precompute/legit
 ;; Created: March 12, 2025
-;; Modified: March 27, 2025
-;; Version: 0.0.11
+;; Modified: January 19, 2026
+;; Version: 0.0.12
 ;; Package-Requires: ((emacs "26.1"))
 
 ;; This program is free software: you can redistribute it and/or modify
@@ -248,14 +248,14 @@ Returns an alist of (shortcut . window)."
 (defun legit--frame-collection ()
   "Return a collection that comprises of various properties of all emacs
 frames and a composed string of the same."
-  (let* ((frame-data (cl-loop for f being the frames collect f))
+  (let* ((frame-data (cl-loop for f being the frames collect f)) ;; use `frames-on-display-list’ instead?
          (number-of-frames (length frame-data)))
     (when (> number-of-frames 1)
       (let* ((pad (legit--pad number-of-frames))
              (frame-strs (mapcar (lambda (x) (legit--get-obj-str x pad legit-layout))
                                  (number-sequence 0 (1- number-of-frames))))
-             (frame-wspc-nums (if (and (eq system-type 'gnu-linux)
-                                       (string-equal "x11" (getenv "XDG_SESSION_TYPE")))
+             (frame-wspc-nums (if (and (eq system-type 'gnu/linux)
+                                       (equal (window-system) 'x))
                                   (mapcar (lambda (x)
                                             (aref (x-window-property "_NET_WM_DESKTOP" x "CARDINAL") 0))
                                           frame-data)
@@ -283,7 +283,10 @@ frames and a composed string of the same."
              (frame-db-strs (cl-loop for a in frame-db
                                      collect (concat
                                               (propertize (car a) 'face 'region) " "
-                                              (propertize (if (string-empty-p (nth 1 a)) "" (format "Wspc%s " (nth 1 a)))
+                                              (propertize (if (and (stringp (nth 1 a))
+                                                                   (string-empty-p (nth 1 a)))
+                                                              ""
+                                                            (format "Wspc%s " (nth 1 a)))
                                                           'face 'font-lock-constant-face)
                                               (nth 2 a) " "
                                               (propertize (nth 3 a) 'face 'font-lock-doc-face)))))
@@ -291,16 +294,20 @@ frames and a composed string of the same."
 
 ;;;;;; legit-to-frame
 (defun legit-to-frame ()
-  "Collect information about available frames and jump to one with `completing-read’."
+  "Collect information about available frames and jump to one with `completing-read’.
+If you’re running X on Gnu/Linux AND if the wmctrl program is accessible,jump
+to workspace and then window.  Else bring window to current workspace."
   (interactive)
   (when-let* ((rcons (legit--frame-collection))
               (db (car rcons))
               (coll (cdr rcons))
-              (result (completing-read "Leg It to Frame: " coll nil t)))
-    (select-frame-set-input-focus
-     (nth 4 (cl-find-if (lambda (x)
-                          (string-equal (car (split-string result)) (car x)))
-                        db)))))
+              (result (completing-read "Leg It to Frame: " coll nil t))
+              (frame-data (nth 4 (cl-find-if (lambda (x)
+                                               (string-equal (car (split-string result)) (car x)))
+                                             db))))
+    (if (and (eq system-type 'gnu/linux) (equal (window-system) 'x) (executable-find "wmctrl"))
+        (call-process "wmctrl" nil nil nil "-i" "-a" (frame-parameter frame-data 'outer-window-id))
+      (select-frame-set-input-focus frame-data))))
 
 ;;;;; Jump Functions
 (defun legit-from-frame ()
