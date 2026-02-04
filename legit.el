@@ -60,12 +60,10 @@ beginning of the first word."
 ;;;;; Utility Functions
 ;;;;;; Decimal To Base
 (defun legit--decimal-to-base (num base)
-  "Convert a NUM in decimal to a certain BASE and return a nested list."
-  (let ((q (/ num base))
-        (r (mod num base)))
-    (cond ((>= q base) (list (legit--decimal-to-base q base) r))
-          ((= q 0) (list r))
-          (t (list q r)))))
+  "Convert a NUM in decimal to a certain BASE and return a list."
+  (if (zerop num) (list 0)
+    (let ((n num) (b base) r)
+      (while (> n 0) (push (mod n b) r) (setq n (/ n b))) r)))
 
 ;;;;;; Clear Overlays
 (defun legit--clear-overlays-in-buffer ()
