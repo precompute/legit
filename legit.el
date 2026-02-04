@@ -29,6 +29,7 @@
 
 ;;; Code:
 (require 'subr-x)
+(require 'posframe)
 ;;;; Faces
 (defface legit-word-jump-face
   '((t :inherit 'region))
@@ -56,16 +57,18 @@ beginning of the first word."
   :type 'boolean
   :group 'legit)
 
+;;;;; Internal
+(defvar legit--window-posframe-names nil
+  "List of posframe buffer names used by `legit-to-window’.  Internal variable.")
+
 ;;;; Functions
 ;;;;; Utility Functions
 ;;;;;; Decimal To Base
 (defun legit--decimal-to-base (num base)
-  "Convert a NUM in decimal to a certain BASE and return a nested list."
-  (let ((q (/ num base))
-        (r (mod num base)))
-    (cond ((>= q base) (list (legit--decimal-to-base q base) r))
-          ((= q 0) (list r))
-          (t (list q r)))))
+  "Convert a NUM in decimal to a certain BASE and return a list."
+  (if (zerop num) (list 0)
+    (let ((n num) (b base) r)
+      (while (> n 0) (push (mod n b) r) (setq n (/ n b))) r)))
 
 ;;;;;; Clear Overlays
 (defun legit--clear-overlays-in-buffer ()
@@ -79,14 +82,21 @@ beginning of the first word."
   (cl-loop for w being the windows of (selected-frame)
            do (with-selected-window w (legit--clear-overlays-in-buffer))))
 
+(defun legit--clear-posframes-in-frame ()
+  "Clear all posframes in all windows of the selected frame."
+  ;; (cl-loop for w being the windows of (selected-frame)
+  ;;          do (with-selected-window w (posframe-hide "*legit-window-posframe*")))
+  (cl-loop for w being the windows of (selected-frame)
+           do (cl-loop for z in legit--window-posframe-names
+                       do (with-selected-window w (posframe-delete z)))))
+
 ;;;;;; Make string for object at INDEX
 (defun legit--get-obj-str (index padding letters)
   "Get a string using LETTERS for the current object at INDEX with PADDING.
 Returns a string."
-  (let ((s (thread-last (legit--decimal-to-base index (length letters))
-                        flatten-tree
-                        (mapcar #'(lambda (x) (aref letters x)))
-                        (apply #'string))))
+  (let ((s (apply #'string
+                  (mapcar (lambda (x) (aref letters x))
+                          (legit--decimal-to-base index (length letters))))))
     (if (> padding (length s))
         (concat (make-string (- padding (length s)) (aref letters 0)) s)
       s)))
@@ -221,12 +231,17 @@ Returns an alist of (shortcut . window)."
         (walk-windows
          (lambda (w)
            (with-selected-window w
-             (let ((overlay (make-overlay (window-start) (window-start)))
-                   (window-str (legit--get-obj-str window-index pad legit-layout)))
-               (overlay-put overlay 'legit-overlay t)
-               (overlay-put overlay 'before-string (propertize window-str
-                                                               'face 'legit-window-jump-face))
-               (overlay-put overlay 'window w)
+             (let* ((overlay (make-overlay (window-start) (window-start)))
+                    (window-str (legit--get-obj-str window-index pad legit-layout))
+                    (pf-w (format "*legit-window-posframe-%s*" window-str)))
+               (add-to-list 'legit--window-posframe-names pf-w)
+               (posframe-show pf-w
+                              :string window-str
+                              :width 5
+                              :height 5
+                              :poshandler 'posframe-poshandler-window-center
+                              :foreground-color "white"
+                              :background-color "black")
                (setq window-db (cons (cons window-str w) window-db)))
              (cl-incf window-index))))
         window-db))))
@@ -241,7 +256,7 @@ Returns an alist of (shortcut . window)."
                   (target (legit--input-n-chars pad legit-layout))
                   (window (cdr (assoc target db))))
         (select-window window))
-    (legit--clear-overlays-in-frame)))
+    (legit--clear-posframes-in-frame)))
 
 ;;;;; Jump to a frame
 ;;;;;; Make collection for completing-read
@@ -308,6 +323,7 @@ to workspace and then window.  Else bring window to current workspace."
     (if (and (eq system-type 'gnu/linux) (equal (window-system) 'x) (executable-find "wmctrl"))
         (call-process "wmctrl" nil nil nil "-i" "-a" (frame-parameter frame-data 'outer-window-id))
       (select-frame-set-input-focus frame-data))))
+;; TODO: Use a transient instead.
 
 ;;;;; Jump Functions
 (defun legit-from-frame ()
